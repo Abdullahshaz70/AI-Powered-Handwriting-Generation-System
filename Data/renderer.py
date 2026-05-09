@@ -221,11 +221,7 @@ if __name__ == "__main__":
     WRITER_FOLDER = os.path.join(_HERE, "Writers_pngs", "writer_Abdullah")
     OUTPUT_PDF = os.path.join(_HERE, "..", "output_handwritten.pdf")
 
-    TEXT = """This is an example of AI generated handwriting.
-The system learned the writing style from collected samples.
-It can now reproduce any text in that exact handwriting style.
-This assignment was generated automatically using a CNN encoder decoder model.
-The model was trained on handwritten character samples collected using the HandScript tool."""
+    TEXT = "The quick brown fox jumps over the lazy dog"
 
     print(f"Device: {DEVICE}")
     print("Loading model...")
