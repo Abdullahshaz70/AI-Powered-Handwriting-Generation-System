@@ -1,9 +1,9 @@
 import os
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader, random_split
-from torchvision.models import vgg16, VGG16_Weights
 
 from dataset import CharDataset, load_all_writers
 from encoder import StyleEncoder
@@ -15,31 +15,36 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 _HERE = os.path.dirname(os.path.abspath(__file__))
 DATA_FOLDER = os.path.join(_HERE, "Writers_pngs")
 CHECKPOINT_DIR = os.path.join(_HERE, "..", "checkpoints")
-NUM_EPOCHS = 50
+NUM_EPOCHS = 100
 BATCH_SIZE = 32
 LEARNING_RATE = 1e-4
 VAL_SPLIT = 0.15
-PIXEL_LOSS_WEIGHT = 1.0
-PERCEPTUAL_LOSS_WEIGHT = 0.1
+L1_LOSS_WEIGHT = 1.0
+SSIM_LOSS_WEIGHT = 1.0
 SAVE_EVERY = 5
-RESUME_FROM = os.path.join(_HERE, "..", "checkpoints", "checkpoint_epoch_005.pt")
+RESUME_FROM = None
 
 
-class PerceptualLoss(nn.Module):
-    def __init__(self):
+class SSIMLoss(nn.Module):
+    """Structural Similarity loss — penalises blurry outputs unlike MSE."""
+    def __init__(self, window_size=11):
         super().__init__()
-        vgg = vgg16(weights=VGG16_Weights.DEFAULT).features[:16].to(DEVICE)
-        for p in vgg.parameters():
-            p.requires_grad = False
-        self.vgg = vgg
-        self.mse = nn.MSELoss()
+        self.ws = window_size
+        self.C1 = 0.01 ** 2
+        self.C2 = 0.03 ** 2
 
-    def forward(self, generated, target):
-        gen_rgb = generated.repeat(1, 3, 1, 1)
-        tgt_rgb = target.repeat(1, 3, 1, 1)
-        gen_feats = self.vgg(gen_rgb)
-        tgt_feats = self.vgg(tgt_rgb)
-        return self.mse(gen_feats, tgt_feats)
+    def forward(self, pred, target):
+        ws, pad = self.ws, self.ws // 2
+        mu1 = F.avg_pool2d(pred,   ws, 1, pad)
+        mu2 = F.avg_pool2d(target, ws, 1, pad)
+        mu1_sq, mu2_sq = mu1.pow(2), mu2.pow(2)
+        mu1_mu2 = mu1 * mu2
+        s1  = F.avg_pool2d(pred   * pred,   ws, 1, pad) - mu1_sq
+        s2  = F.avg_pool2d(target * target, ws, 1, pad) - mu2_sq
+        s12 = F.avg_pool2d(pred   * target, ws, 1, pad) - mu1_mu2
+        ssim_map = ((2 * mu1_mu2 + self.C1) * (2 * s12 + self.C2)) / \
+                   ((mu1_sq + mu2_sq + self.C1) * (s1 + s2 + self.C2))
+        return 1 - ssim_map.mean()
 
 
 def save_checkpoint(encoder, generator, optimizer, epoch, train_loss, val_loss):
@@ -65,7 +70,7 @@ def load_checkpoint(encoder, generator, optimizer, path):
     return ckpt["epoch"]
 
 
-def run_epoch(encoder, generator, loader, optimizer, pixel_criterion, perceptual_criterion, training):
+def run_epoch(encoder, generator, loader, optimizer, l1_criterion, ssim_criterion, training):
     encoder.train(training)
     generator.train(training)
 
@@ -80,9 +85,9 @@ def run_epoch(encoder, generator, loader, optimizer, pixel_criterion, perceptual
             style = encoder(images)
             generated = generator(style, labels)
 
-            pixel_loss = pixel_criterion(generated, images)
-            perceptual_loss = perceptual_criterion(generated, images)
-            loss = PIXEL_LOSS_WEIGHT * pixel_loss + PERCEPTUAL_LOSS_WEIGHT * perceptual_loss
+            l1_loss   = l1_criterion(generated, images)
+            ssim_loss = ssim_criterion(generated, images)
+            loss = L1_LOSS_WEIGHT * l1_loss + SSIM_LOSS_WEIGHT * ssim_loss
 
             if training:
                 optimizer.zero_grad()
@@ -124,8 +129,8 @@ def main():
 
     scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
 
-    pixel_criterion = nn.MSELoss()
-    perceptual_criterion = PerceptualLoss()
+    l1_criterion   = nn.L1Loss()
+    ssim_criterion = SSIMLoss().to(DEVICE)
 
     start_epoch = 0
     if RESUME_FROM and os.path.isfile(RESUME_FROM):
@@ -134,8 +139,8 @@ def main():
     best_val_loss = float("inf")
 
     for epoch in range(start_epoch + 1, NUM_EPOCHS + 1):
-        train_loss = run_epoch(encoder, generator, train_loader, optimizer, pixel_criterion, perceptual_criterion, training=True)
-        val_loss = run_epoch(encoder, generator, val_loader, optimizer, pixel_criterion, perceptual_criterion, training=False)
+        train_loss = run_epoch(encoder, generator, train_loader, optimizer, l1_criterion, ssim_criterion, training=True)
+        val_loss   = run_epoch(encoder, generator, val_loader,   optimizer, l1_criterion, ssim_criterion, training=False)
 
         scheduler.step()
 
