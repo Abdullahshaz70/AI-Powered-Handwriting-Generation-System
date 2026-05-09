@@ -86,7 +86,7 @@ def plot_confusion_matrix(pred, true, labels, title, save_path):
 def plot_tsne(features, writer_true, writer_names, save_path):
     print("Running t-SNE (this may take a minute)...")
     perp = min(30, len(features) - 1)
-    tsne = TSNE(n_components=2, perplexity=perp, random_state=42, n_iter=1000)
+    tsne = TSNE(n_components=2, perplexity=perp, random_state=42, max_iter=1000)
     emb  = tsne.fit_transform(features)
 
     fig, ax = plt.subplots(figsize=(9, 7))

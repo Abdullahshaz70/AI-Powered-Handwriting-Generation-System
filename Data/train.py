@@ -57,7 +57,7 @@ def accuracy(logits, targets):
     return (logits.argmax(1) == targets).float().mean().item()
 
 
-def run_epoch(model, loader, criterion, optimizer, device, train=True):
+def run_epoch(model, loader, char_criterion, writer_criterion, optimizer, device, train=True):
     model.train(train)
     total_loss = char_correct = writer_correct = n = 0
     with torch.set_grad_enabled(train):
@@ -67,8 +67,8 @@ def run_epoch(model, loader, criterion, optimizer, device, train=True):
             writer_labels = writer_labels.to(device)
 
             char_logits, writer_logits = model(images)
-            loss = 0.5 * criterion(char_logits, char_labels) + \
-                   0.5 * criterion(writer_logits, writer_labels)
+            loss = 0.4 * char_criterion(char_logits, char_labels) + \
+                   0.6 * writer_criterion(writer_logits, writer_labels)
 
             if train:
                 optimizer.zero_grad()
@@ -112,7 +112,8 @@ def main():
     print(f"Writers: {writer_names}\n")
 
     model     = MultiTaskCNN(num_writers=num_writers).to(device)
-    criterion = nn.CrossEntropyLoss()
+    char_criterion   = nn.CrossEntropyLoss(label_smoothing=0.1)
+    writer_criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = StepLR(optimizer, step_size=STEP_SIZE, gamma=GAMMA)
 
@@ -124,8 +125,8 @@ def main():
     print("-" * len(header))
 
     for epoch in range(1, NUM_EPOCHS + 1):
-        _, tr_char, tr_writer = run_epoch(model, train_loader, criterion, optimizer, device, train=True)
-        _, vl_char, vl_writer = run_epoch(model, val_loader,   criterion, optimizer, device, train=False)
+        _, tr_char, tr_writer = run_epoch(model, train_loader, char_criterion, writer_criterion, optimizer, device, train=True)
+        _, vl_char, vl_writer = run_epoch(model, val_loader,   char_criterion, writer_criterion, optimizer, device, train=False)
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
 
