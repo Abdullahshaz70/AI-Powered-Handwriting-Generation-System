@@ -1,0 +1,21 @@
+# Model checkpoints
+checkpoints/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Duplicate/copy files
+*- Copy.*
+*- Copy/
+
+# Large data archives
+*.zip
+
+# IDE
+.idea/
+.vscode/
+
+# Claude Code settings
+.claude/
