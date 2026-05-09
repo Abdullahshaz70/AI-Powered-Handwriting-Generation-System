@@ -3,7 +3,7 @@ import string
 import textwrap
 import torch
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 from fpdf import FPDF
 
 from encoder import StyleEncoder
@@ -70,20 +70,23 @@ def generate_char_image(generator, style, char):
     img_tensor = generated.squeeze().cpu()
     img_arr = ((img_tensor.numpy() + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
 
-    # Training Binarize stores ink=255(bright), paper=0(dark) — invert so ink=dark
+    # ink=255(bright), paper=0(dark) in training — invert so ink=dark on white
     img_arr = 255 - img_arr
 
-    # Stretch contrast to full range
+    # Contrast stretch to full range
     lo, hi = img_arr.min(), img_arr.max()
     if hi > lo:
         img_arr = ((img_arr.astype(np.float32) - lo) / (hi - lo) * 255).astype(np.uint8)
 
-    # Resize first, then binarize — avoids LANCZOS re-introducing gray on binary pixels
+    # Resize — LANCZOS blends thin ink strokes into gray
     img = Image.fromarray(img_arr, mode="L")
     img = img.resize((CHAR_RENDER_PX, CHAR_RENDER_PX), Image.LANCZOS)
-    img_arr = np.array(img)
-    img_arr = np.where(img_arr < 128, 0, 255).astype(np.uint8)
-    img = Image.fromarray(img_arr, mode="L")
+
+    # Gamma correction (applied after resize): pushes gray strokes toward black
+    # without touching pure white paper (1.0^n = 1.0 always)
+    arr = np.array(img).astype(np.float32) / 255.0
+    arr = np.power(arr, 4.0)
+    img = Image.fromarray((arr * 255).astype(np.uint8), mode="L")
 
     return img
 
