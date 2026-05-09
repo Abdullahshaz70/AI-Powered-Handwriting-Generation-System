@@ -14,8 +14,8 @@ from dataset import load_dataset, CharDataset
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CHAR_SIZE = 128
-CHAR_RENDER_PX = 32
-LINE_SPACING = 48
+CHAR_RENDER_PX = 48
+LINE_SPACING = 64
 PAGE_LEFT_MARGIN = 60
 PAGE_TOP_MARGIN = 60
 PAGE_RIGHT_MARGIN = 60
@@ -69,18 +69,21 @@ def generate_char_image(generator, style, char):
 
     img_tensor = generated.squeeze().cpu()
     img_arr = ((img_tensor.numpy() + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
-    img_arr = 255 - img_arr  # flip: black ink on white paper
 
-    # Stretch contrast
+    # Training Binarize stores ink=255(bright), paper=0(dark) — invert so ink=dark
+    img_arr = 255 - img_arr
+
+    # Stretch contrast to full range
     lo, hi = img_arr.min(), img_arr.max()
     if hi > lo:
         img_arr = ((img_arr.astype(np.float32) - lo) / (hi - lo) * 255).astype(np.uint8)
 
-    # Soft threshold at 180 — keeps ink gradients, avoids wiping out faint strokes
-    img_arr = np.where(img_arr < 180, img_arr, 255).astype(np.uint8)
-
+    # Resize first, then binarize — avoids LANCZOS re-introducing gray on binary pixels
     img = Image.fromarray(img_arr, mode="L")
-    img = img.resize((CHAR_RENDER_PX, CHAR_RENDER_PX), Image.BILINEAR)
+    img = img.resize((CHAR_RENDER_PX, CHAR_RENDER_PX), Image.LANCZOS)
+    img_arr = np.array(img)
+    img_arr = np.where(img_arr < 128, 0, 255).astype(np.uint8)
+    img = Image.fromarray(img_arr, mode="L")
 
     return img
 

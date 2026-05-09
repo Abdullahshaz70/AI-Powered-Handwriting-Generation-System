@@ -26,6 +26,7 @@ BETA2       = 0.999
 L1_WEIGHT   = 100.0
 SSIM_WEIGHT = 10.0
 ADV_WEIGHT  = 1.0
+CLS_WEIGHT  = 2.0     # auxiliary classifier weight — forces character distinctness
 VAL_SPLIT   = 0.10
 SAVE_EVERY  = 5
 RESUME_FROM = None
@@ -82,7 +83,8 @@ def load_checkpoint(encoder, generator, discriminator, opt_g, opt_d, path):
     return ckpt["epoch"]
 
 
-def train_epoch(encoder, generator, discriminator, loader, opt_g, opt_d, l1_crit, ssim_crit, bce_crit):
+def train_epoch(encoder, generator, discriminator, loader, opt_g, opt_d,
+                l1_crit, ssim_crit, bce_crit, ce_crit):
     encoder.train()
     generator.train()
     discriminator.train()
@@ -98,24 +100,37 @@ def train_epoch(encoder, generator, discriminator, loader, opt_g, opt_d, l1_crit
         # ---- Discriminator step ----
         opt_d.zero_grad()
         with torch.no_grad():
-            style = encoder(images)
+            # Decouple style from content: shuffle so style of image[i] != target[i]
+            perm  = torch.randperm(b, device=DEVICE)
+            style = encoder(images[perm])
             fake  = generator(style, labels)
 
-        d_real = bce_crit(discriminator(images, labels),      torch.full((b, 1), 0.9, device=DEVICE))
-        d_fake = bce_crit(discriminator(fake.detach(), labels), torch.zeros(b, 1, device=DEVICE))
-        d_loss = (d_real + d_fake) * 0.5
+        rf_real, cls_real = discriminator(images, labels)
+        rf_fake, cls_fake = discriminator(fake.detach(), labels)
+
+        d_rf  = (bce_crit(rf_real, torch.full((b, 1), 0.9, device=DEVICE)) +
+                 bce_crit(rf_fake, torch.zeros(b, 1, device=DEVICE))) * 0.5
+        d_cls = (ce_crit(cls_real, labels) + ce_crit(cls_fake, labels)) * 0.5
+        d_loss = d_rf + CLS_WEIGHT * d_cls
         d_loss.backward()
         opt_d.step()
 
         # ---- Generator + Encoder step ----
         opt_g.zero_grad()
-        style = encoder(images)
+        perm  = torch.randperm(b, device=DEVICE)
+        style = encoder(images[perm])
         fake  = generator(style, labels)
 
-        adv_loss  = bce_crit(discriminator(fake, labels), torch.ones(b, 1, device=DEVICE))
+        rf_fake, cls_fake = discriminator(fake, labels)
+        adv_loss  = bce_crit(rf_fake, torch.ones(b, 1, device=DEVICE))
+        cls_loss  = ce_crit(cls_fake, labels)   # must fool the character classifier
         l1_loss   = l1_crit(fake, images)
         ssim_loss = ssim_crit(fake, images)
-        g_loss    = ADV_WEIGHT * adv_loss + L1_WEIGHT * l1_loss + SSIM_WEIGHT * ssim_loss
+
+        g_loss = (ADV_WEIGHT  * adv_loss +
+                  CLS_WEIGHT  * cls_loss +
+                  L1_WEIGHT   * l1_loss  +
+                  SSIM_WEIGHT * ssim_loss)
         g_loss.backward()
         opt_g.step()
 
@@ -136,7 +151,8 @@ def val_epoch(encoder, generator, loader, l1_crit, ssim_crit):
             labels = labels.to(DEVICE)
             style  = encoder(images)
             fake   = generator(style, labels)
-            total += (L1_WEIGHT * l1_crit(fake, images) + SSIM_WEIGHT * ssim_crit(fake, images)).item() * images.size(0)
+            total += (L1_WEIGHT * l1_crit(fake, images) +
+                      SSIM_WEIGHT * ssim_crit(fake, images)).item() * images.size(0)
     return total / len(loader.dataset)
 
 
@@ -155,8 +171,9 @@ def main():
     )
 
     nw = 4 if DEVICE.type == "cuda" else 0
-    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=nw, pin_memory=(DEVICE.type == "cuda"))
-    val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=nw, pin_memory=(DEVICE.type == "cuda"))
+    pm = DEVICE.type == "cuda"
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=nw, pin_memory=pm)
+    val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=nw, pin_memory=pm)
     print(f"Train: {train_size} | Val: {val_size}")
 
     encoder       = StyleEncoder().to(DEVICE)
@@ -175,6 +192,7 @@ def main():
     l1_crit   = nn.L1Loss()
     ssim_crit = SSIMLoss().to(DEVICE)
     bce_crit  = nn.BCEWithLogitsLoss()
+    ce_crit   = nn.CrossEntropyLoss()
 
     start_epoch = 0
     if RESUME_FROM and os.path.isfile(RESUME_FROM):
@@ -186,7 +204,7 @@ def main():
         d_loss, g_loss = train_epoch(
             encoder, generator, discriminator,
             train_loader, opt_g, opt_d,
-            l1_crit, ssim_crit, bce_crit
+            l1_crit, ssim_crit, bce_crit, ce_crit
         )
         val_loss = val_epoch(encoder, generator, val_loader, l1_crit, ssim_crit)
 
