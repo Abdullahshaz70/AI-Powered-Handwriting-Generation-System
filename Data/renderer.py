@@ -71,13 +71,13 @@ def generate_char_image(generator, style, char):
     img_arr = ((img_tensor.numpy() + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
     img_arr = 255 - img_arr  # flip: black ink on white paper
 
-    # Stretch contrast so weak signals become full black/white
+    # Stretch contrast
     lo, hi = img_arr.min(), img_arr.max()
     if hi > lo:
         img_arr = ((img_arr.astype(np.float32) - lo) / (hi - lo) * 255).astype(np.uint8)
 
-    # Binarize: ink below threshold → 0 (black), paper → 255 (white)
-    img_arr = np.where(img_arr < 128, 0, 255).astype(np.uint8)
+    # Soft threshold at 180 — keeps ink gradients, avoids wiping out faint strokes
+    img_arr = np.where(img_arr < 180, img_arr, 255).astype(np.uint8)
 
     img = Image.fromarray(img_arr, mode="L")
     img = img.resize((CHAR_RENDER_PX, CHAR_RENDER_PX), Image.BILINEAR)

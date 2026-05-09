@@ -8,25 +8,30 @@ from torch.utils.data import DataLoader, random_split
 from dataset import CharDataset, load_all_writers
 from encoder import StyleEncoder
 from generator import CharacterGenerator
+from discriminator import Discriminator
 
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
-DATA_FOLDER = os.path.join(_HERE, "Writers_pngs")
+DATA_FOLDER    = os.path.join(_HERE, "Writers_pngs")
 CHECKPOINT_DIR = os.path.join(_HERE, "..", "checkpoints")
-NUM_EPOCHS = 100
-BATCH_SIZE = 32
-LEARNING_RATE = 1e-4
-VAL_SPLIT = 0.10
-L1_LOSS_WEIGHT = 1.0
-SSIM_LOSS_WEIGHT = 1.0
-SAVE_EVERY = 5
+
+NUM_EPOCHS  = 100
+BATCH_SIZE  = 32
+LR_G        = 2e-4
+LR_D        = 1e-4
+BETA1       = 0.5
+BETA2       = 0.999
+L1_WEIGHT   = 100.0
+SSIM_WEIGHT = 10.0
+ADV_WEIGHT  = 1.0
+VAL_SPLIT   = 0.10
+SAVE_EVERY  = 5
 RESUME_FROM = None
 
 
 class SSIMLoss(nn.Module):
-    """Structural Similarity loss — penalises blurry outputs unlike MSE."""
     def __init__(self, window_size=11):
         super().__init__()
         self.ws = window_size
@@ -47,56 +52,92 @@ class SSIMLoss(nn.Module):
         return 1 - ssim_map.mean()
 
 
-def save_checkpoint(encoder, generator, optimizer, epoch, train_loss, val_loss):
+def save_checkpoint(encoder, generator, discriminator, opt_g, opt_d, epoch, g_loss, val_loss):
     os.makedirs(CHECKPOINT_DIR, exist_ok=True)
     path = os.path.join(CHECKPOINT_DIR, f"checkpoint_epoch_{epoch:03d}.pt")
     torch.save({
-        "epoch": epoch,
-        "encoder_state": encoder.state_dict(),
-        "generator_state": generator.state_dict(),
-        "optimizer_state": optimizer.state_dict(),
-        "train_loss": train_loss,
-        "val_loss": val_loss,
+        "epoch":               epoch,
+        "encoder_state":       encoder.state_dict(),
+        "generator_state":     generator.state_dict(),
+        "discriminator_state": discriminator.state_dict(),
+        "optimizer_g_state":   opt_g.state_dict(),
+        "optimizer_d_state":   opt_d.state_dict(),
+        "g_loss":              g_loss,
+        "val_loss":            val_loss,
     }, path)
     print(f"  Checkpoint saved -> {path}")
 
 
-def load_checkpoint(encoder, generator, optimizer, path):
+def load_checkpoint(encoder, generator, discriminator, opt_g, opt_d, path):
     ckpt = torch.load(path, map_location=DEVICE)
     encoder.load_state_dict(ckpt["encoder_state"])
     generator.load_state_dict(ckpt["generator_state"])
-    optimizer.load_state_dict(ckpt["optimizer_state"])
+    if "discriminator_state" in ckpt:
+        discriminator.load_state_dict(ckpt["discriminator_state"])
+    if "optimizer_g_state" in ckpt:
+        opt_g.load_state_dict(ckpt["optimizer_g_state"])
+    if "optimizer_d_state" in ckpt:
+        opt_d.load_state_dict(ckpt["optimizer_d_state"])
     print(f"Resumed from {path} (epoch {ckpt['epoch']})")
     return ckpt["epoch"]
 
 
-def run_epoch(encoder, generator, loader, optimizer, l1_criterion, ssim_criterion, training):
-    encoder.train(training)
-    generator.train(training)
+def train_epoch(encoder, generator, discriminator, loader, opt_g, opt_d, l1_crit, ssim_crit, bce_crit):
+    encoder.train()
+    generator.train()
+    discriminator.train()
 
-    total_loss = 0.0
-    context = torch.enable_grad() if training else torch.no_grad()
+    total_d = 0.0
+    total_g = 0.0
 
-    with context:
+    for images, labels in loader:
+        images = images.to(DEVICE)
+        labels = labels.to(DEVICE)
+        b = images.size(0)
+
+        # ---- Discriminator step ----
+        opt_d.zero_grad()
+        with torch.no_grad():
+            style = encoder(images)
+            fake  = generator(style, labels)
+
+        d_real = bce_crit(discriminator(images, labels),      torch.full((b, 1), 0.9, device=DEVICE))
+        d_fake = bce_crit(discriminator(fake.detach(), labels), torch.zeros(b, 1, device=DEVICE))
+        d_loss = (d_real + d_fake) * 0.5
+        d_loss.backward()
+        opt_d.step()
+
+        # ---- Generator + Encoder step ----
+        opt_g.zero_grad()
+        style = encoder(images)
+        fake  = generator(style, labels)
+
+        adv_loss  = bce_crit(discriminator(fake, labels), torch.ones(b, 1, device=DEVICE))
+        l1_loss   = l1_crit(fake, images)
+        ssim_loss = ssim_crit(fake, images)
+        g_loss    = ADV_WEIGHT * adv_loss + L1_WEIGHT * l1_loss + SSIM_WEIGHT * ssim_loss
+        g_loss.backward()
+        opt_g.step()
+
+        total_d += d_loss.item() * b
+        total_g += g_loss.item() * b
+
+    n = len(loader.dataset)
+    return total_d / n, total_g / n
+
+
+def val_epoch(encoder, generator, loader, l1_crit, ssim_crit):
+    encoder.eval()
+    generator.eval()
+    total = 0.0
+    with torch.no_grad():
         for images, labels in loader:
             images = images.to(DEVICE)
             labels = labels.to(DEVICE)
-
-            style = encoder(images)
-            generated = generator(style, labels)
-
-            l1_loss   = l1_criterion(generated, images)
-            ssim_loss = ssim_criterion(generated, images)
-            loss = L1_LOSS_WEIGHT * l1_loss + SSIM_LOSS_WEIGHT * ssim_loss
-
-            if training:
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-
-            total_loss += loss.item() * images.size(0)
-
-    return total_loss / len(loader.dataset)
+            style  = encoder(images)
+            fake   = generator(style, labels)
+            total += (L1_WEIGHT * l1_crit(fake, images) + SSIM_WEIGHT * ssim_crit(fake, images)).item() * images.size(0)
+    return total / len(loader.dataset)
 
 
 def main():
@@ -106,63 +147,75 @@ def main():
     print(f"Total samples loaded: {len(data_list)}")
 
     full_dataset = CharDataset(data_list)
-
-    val_size = int(len(full_dataset) * VAL_SPLIT)
-    train_size = len(full_dataset) - val_size
-    train_dataset, val_dataset = random_split(
+    val_size     = int(len(full_dataset) * VAL_SPLIT)
+    train_size   = len(full_dataset) - val_size
+    train_ds, val_ds = random_split(
         full_dataset, [train_size, val_size],
         generator=torch.Generator().manual_seed(42)
     )
 
-    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True, num_workers=0, pin_memory=True)
-    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True)
-
+    nw = 4 if DEVICE.type == "cuda" else 0
+    train_loader = DataLoader(train_ds, batch_size=BATCH_SIZE, shuffle=True,  num_workers=nw, pin_memory=(DEVICE.type == "cuda"))
+    val_loader   = DataLoader(val_ds,   batch_size=BATCH_SIZE, shuffle=False, num_workers=nw, pin_memory=(DEVICE.type == "cuda"))
     print(f"Train: {train_size} | Val: {val_size}")
 
-    encoder = StyleEncoder().to(DEVICE)
-    generator = CharacterGenerator().to(DEVICE)
+    encoder       = StyleEncoder().to(DEVICE)
+    generator     = CharacterGenerator().to(DEVICE)
+    discriminator = Discriminator().to(DEVICE)
 
-    optimizer = optim.Adam(
+    opt_g = optim.Adam(
         list(encoder.parameters()) + list(generator.parameters()),
-        lr=LEARNING_RATE
+        lr=LR_G, betas=(BETA1, BETA2)
     )
+    opt_d = optim.Adam(discriminator.parameters(), lr=LR_D, betas=(BETA1, BETA2))
 
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=15, gamma=0.5)
+    scheduler_g = optim.lr_scheduler.StepLR(opt_g, step_size=30, gamma=0.5)
+    scheduler_d = optim.lr_scheduler.StepLR(opt_d, step_size=30, gamma=0.5)
 
-    l1_criterion   = nn.L1Loss()
-    ssim_criterion = SSIMLoss().to(DEVICE)
+    l1_crit   = nn.L1Loss()
+    ssim_crit = SSIMLoss().to(DEVICE)
+    bce_crit  = nn.BCEWithLogitsLoss()
 
     start_epoch = 0
     if RESUME_FROM and os.path.isfile(RESUME_FROM):
-        start_epoch = load_checkpoint(encoder, generator, optimizer, RESUME_FROM)
+        start_epoch = load_checkpoint(encoder, generator, discriminator, opt_g, opt_d, RESUME_FROM)
 
     best_val_loss = float("inf")
 
     for epoch in range(start_epoch + 1, NUM_EPOCHS + 1):
-        train_loss = run_epoch(encoder, generator, train_loader, optimizer, l1_criterion, ssim_criterion, training=True)
-        val_loss   = run_epoch(encoder, generator, val_loader,   optimizer, l1_criterion, ssim_criterion, training=False)
+        d_loss, g_loss = train_epoch(
+            encoder, generator, discriminator,
+            train_loader, opt_g, opt_d,
+            l1_crit, ssim_crit, bce_crit
+        )
+        val_loss = val_epoch(encoder, generator, val_loader, l1_crit, ssim_crit)
 
-        scheduler.step()
+        scheduler_g.step()
+        scheduler_d.step()
 
-        print(f"Epoch {epoch:03d}/{NUM_EPOCHS} | Train Loss: {train_loss:.5f} | Val Loss: {val_loss:.5f} | LR: {scheduler.get_last_lr()[0]:.6f}")
+        print(
+            f"Epoch {epoch:03d}/{NUM_EPOCHS} | "
+            f"D: {d_loss:.4f} | G: {g_loss:.4f} | "
+            f"Val: {val_loss:.4f} | LR_G: {scheduler_g.get_last_lr()[0]:.6f}"
+        )
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             best_path = os.path.join(CHECKPOINT_DIR, "best_model.pt")
             os.makedirs(CHECKPOINT_DIR, exist_ok=True)
             torch.save({
-                "epoch": epoch,
-                "encoder_state": encoder.state_dict(),
+                "epoch":           epoch,
+                "encoder_state":   encoder.state_dict(),
                 "generator_state": generator.state_dict(),
-                "val_loss": val_loss,
+                "val_loss":        val_loss,
             }, best_path)
-            print(f"  Best model updated (val_loss={val_loss:.5f})")
+            print(f"  Best model updated (val={val_loss:.4f})")
 
         if epoch % SAVE_EVERY == 0:
-            save_checkpoint(encoder, generator, optimizer, epoch, train_loss, val_loss)
+            save_checkpoint(encoder, generator, discriminator, opt_g, opt_d, epoch, g_loss, val_loss)
 
     print("Training complete.")
-    print(f"Best validation loss: {best_val_loss:.5f}")
+    print(f"Best val loss: {best_val_loss:.4f}")
 
 
 if __name__ == "__main__":
