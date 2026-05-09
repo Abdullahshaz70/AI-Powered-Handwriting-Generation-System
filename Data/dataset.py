@@ -157,7 +157,7 @@ def load_dataset(folder_path):
         # This handles both "Name_lc_a_r01" and "Name_24067_lc_a_r01" patterns.
         char_in_file = None
         for i, part in enumerate(parts):
-            if part in ('lc', 'uc') and i + 1 < len(parts):
+            if part in ('lc', 'uc', 'n') and i + 1 < len(parts):
                 candidate = parts[i + 1]
                 if len(candidate) == 1 and candidate in CHAR_TO_LABEL:
                     char_in_file = candidate
