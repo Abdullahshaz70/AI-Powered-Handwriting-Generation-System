@@ -151,22 +151,48 @@ def load_dataset(folder_path):
         if not filename.lower().endswith('.png'):
             continue
 
-        if len(filename) == 0:
+        parts = os.path.splitext(filename)[0].split('_')
+
+        # Robust char extraction: find 'lc'/'uc' case marker, take the next part.
+        # This handles both "Name_lc_a_r01" and "Name_24067_lc_a_r01" patterns.
+        char_in_file = None
+        for i, part in enumerate(parts):
+            if part in ('lc', 'uc') and i + 1 < len(parts):
+                candidate = parts[i + 1]
+                if len(candidate) == 1 and candidate in CHAR_TO_LABEL:
+                    char_in_file = candidate
+                    break
+
+        # Fallback: original index-2 approach for any other naming convention
+        if char_in_file is None and len(parts) > 2:
+            candidate = parts[2]
+            if len(candidate) == 1 and candidate in CHAR_TO_LABEL:
+                char_in_file = candidate
+
+        if char_in_file is None:
             continue
 
-        filename_split = filename.split('_')
-
-        char_in_file = filename_split[2]
-
-        if char_in_file not in CHAR_TO_LABEL:
-            continue
-
-        full_path = os.path.join(folder_path , filename)
+        full_path = os.path.join(folder_path, filename)
         label = CHAR_TO_LABEL[char_in_file]
-
-        dataset.append((full_path , label))
+        dataset.append((full_path, label))
 
     return dataset
+
+
+def load_all_writers(root_folder):
+    all_data = []
+    skip_dirs = {'Writers_Zip', 'output_preview'}
+
+    for entry in os.scandir(root_folder):
+        if not entry.is_dir() or entry.name in skip_dirs:
+            continue
+        writer_data = load_dataset(entry.path)
+        if writer_data:
+            print(f"  Loaded {len(writer_data)} samples from {entry.name}")
+            all_data.extend(writer_data)
+
+    print(f"Total samples across all writers: {len(all_data)}")
+    return all_data
 
 
 
