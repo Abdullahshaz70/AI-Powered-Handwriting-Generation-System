@@ -13,7 +13,7 @@ from model import MultiTaskCNN
 # ── config ────────────────────────────────────────────────────────────────────
 DATA_ROOT   = os.path.join(os.path.dirname(__file__), "Writers_pngs")
 CKPT_DIR    = os.path.join(os.path.dirname(os.path.dirname(__file__)), "checkpoints")
-NUM_EPOCHS  = 60
+NUM_EPOCHS  = 100
 BATCH_SIZE  = 32
 LR          = 1e-3
 VAL_SPLIT   = 0.15
