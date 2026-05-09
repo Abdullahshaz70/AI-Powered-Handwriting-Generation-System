@@ -140,6 +140,18 @@ def main():
     for ch, acc in sorted(char_accs.items(), key=lambda x: x[1]):
         print(f"  '{ch}': {acc*100:.1f}%")
 
+    # ── 3b: confusion pairs for chars below 80% ────────────────────────────────
+    print("\nConfusion pairs for hard characters (true -> most predicted):")
+    for c in np.unique(char_true):
+        mask = char_true == c
+        if (char_pred[mask] == c).mean() < 0.80:
+            wrong = char_pred[mask][char_pred[mask] != c]
+            if len(wrong):
+                from collections import Counter
+                top = Counter(wrong.tolist()).most_common(3)
+                pairs = ", ".join(f"'{LABEL_TO_CHAR[p]}'x{cnt}" for p, cnt in top)
+                print(f"  '{LABEL_TO_CHAR[c]}' confused as: {pairs}")
+
     # ── 4: per-writer accuracy ─────────────────────────────────────────────────
     print("\nPer-writer accuracy:")
     for wid, name in enumerate(writer_names):
