@@ -1,5 +1,11 @@
-# Model checkpoints
-checkpoints/
+# Model checkpoints — track generator.pt but ignore intermediate saves
+checkpoints/best_model.pt
+
+# Generated outputs
+outputs/
+
+# Bézier label cache (auto-regenerated)
+Data/bezier_labels.npy
 
 # Python cache
 __pycache__/
