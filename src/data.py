@@ -116,15 +116,26 @@ def load_all_data(writers_root, cache_path=None):
     return records, writer_names
 
 
+def char_idx_to_cat(char_idx):
+    """0=uppercase A-Z, 1=lowercase a-z, 2=digit 0-9."""
+    if char_idx < 26:  return 0
+    if char_idx < 52:  return 1
+    return 2
+
+
 class BezierDataset(Dataset):
     """
     Lightweight dataset — no image loading during training.
-    Returns (char_idx_tensor, bezier_label) only.
-    bezier_label: float32, shape (24,), Bézier control points in [0, 1].
+    Returns (char_idx, cat_idx, bezier_label).
+    bezier_label: float32, shape (48,), Bézier control points in [0, 1].
     """
     def __init__(self, records):
         self.items = [
-            (torch.tensor(char_idx, dtype=torch.long), torch.from_numpy(label))
+            (
+                torch.tensor(char_idx, dtype=torch.long),
+                torch.tensor(char_idx_to_cat(char_idx), dtype=torch.long),
+                torch.from_numpy(label),
+            )
             for _, char_idx, _, label in records
         ]
 

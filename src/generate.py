@@ -1,25 +1,21 @@
 """
-Inference pipeline:
-  load model → char_idx → CNN predicts Bézier curves
-  → add variation → render → stitch word → build ruled page → optional PDF
+Core generation functions: load model, generate single character image.
+Sentence layout and PNG export live in generate_samples.py.
 """
 import os
 import sys
-import random
 import numpy as np
-from PIL import Image, ImageDraw
 import torch
 
 sys.path.insert(0, os.path.dirname(__file__))
-from model  import CharNet
+from model  import CharNet, char_idx_to_cat
 from bezier import label_to_curves, add_variation, draw_bezier
-from data   import CHAR_TO_IDX, CANVAS_SIZE
+from data   import CHAR_TO_IDX, char_idx_to_cat as data_cat, CANVAS_SIZE
 
 _HERE     = os.path.dirname(os.path.abspath(__file__))
 CKPT_PATH = os.path.normpath(os.path.join(_HERE, '..', 'checkpoints', 'style_net.pt'))
 
 
-# ── model loading ─────────────────────────────────────────────────────────────
 def load_model(ckpt_path=None, device=None):
     if device is None:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -31,92 +27,16 @@ def load_model(ckpt_path=None, device=None):
     return model, ckpt, device
 
 
-# ── single character generation ───────────────────────────────────────────────
 def generate_char(model, char, device, noise_scale=0.018):
-    """
-    Predict Bézier curves for char, add natural variation, render to canvas.
-    Returns uint8 numpy array (128, 128).
-    """
-    char_idx = torch.tensor([CHAR_TO_IDX[char]], device=device)
+    """Predict Bézier curves for char, add variation, render. Returns uint8 (128,128)."""
+    idx      = CHAR_TO_IDX[char]
+    char_t   = torch.tensor([idx],            device=device)
+    cat_t    = torch.tensor([data_cat(idx)],  device=device)
 
     with torch.no_grad():
-        label = model(char_idx).squeeze().cpu().numpy()   # (24,)
+        label = model(char_t, cat_t).squeeze().cpu().numpy()
 
     curves = label_to_curves(label)
     varied = add_variation(curves, noise_scale=noise_scale)
     canvas = np.ones((CANVAS_SIZE, CANVAS_SIZE), dtype=np.uint8) * 255
     return draw_bezier(canvas, varied, thickness=3)
-
-
-# ── word / page assembly ──────────────────────────────────────────────────────
-def stitch_word(char_images, spacing=10, jitter_range=5):
-    H       = CANVAS_SIZE
-    total_w = sum(img.shape[1] for img in char_images) + spacing * (len(char_images) - 1)
-    strip   = np.ones((H + 30, total_w), dtype=np.uint8) * 255
-    x = 0
-    for ch in char_images:
-        jitter = random.randint(-jitter_range, jitter_range)
-        y      = 10 + jitter
-        strip[y:y + H, x:x + ch.shape[1]] = ch
-        x += ch.shape[1] + spacing
-    return strip
-
-
-def build_page(strip, canvas_h=420, canvas_w=950):
-    page = Image.fromarray(np.ones((canvas_h, canvas_w), dtype=np.uint8) * 255, mode='L')
-    draw = ImageDraw.Draw(page)
-    for ry in range(160, canvas_h, 42):
-        draw.line([(40, ry), (canvas_w - 40, ry)], fill=195, width=1)
-    page_arr = np.array(page)
-    ph, pw   = strip.shape
-    pw       = min(pw, canvas_w - 65)
-    page_arr[115:115 + ph, 65:65 + pw] = strip[:, :pw]
-    return page_arr
-
-
-def generate_word(model, word, device=None, noise_scale=0.018, **kwargs):
-    """Generate all characters of word and stitch onto a ruled page."""
-    chars = [
-        generate_char(model, ch, device, noise_scale)
-        for ch in word if ch in CHAR_TO_IDX
-    ]
-    if not chars:
-        return None, None
-    strip = stitch_word(chars)
-    page  = build_page(strip)
-    return strip, page
-
-
-# ── PDF export ────────────────────────────────────────────────────────────────
-def export_pdf(page_np, pdf_path):
-    from reportlab.pdfgen import canvas as rl_canvas
-    tmp = pdf_path.replace('.pdf', '_tmp.png')
-    Image.fromarray(page_np).save(tmp)
-    iw, ih = page_np.shape[1], page_np.shape[0]
-    c = rl_canvas.Canvas(pdf_path, pagesize=(iw, ih))
-    c.drawImage(tmp, 0, 0, iw, ih)
-    c.save()
-    os.remove(tmp)
-
-
-# ── quick CLI demo ────────────────────────────────────────────────────────────
-if __name__ == '__main__':
-    import argparse
-    p = argparse.ArgumentParser()
-    p.add_argument('text',    help='Text to generate (A-Z a-z 0-9)')
-    p.add_argument('--noise', type=float, default=0.018, help='Variation noise (default 0.018)')
-    p.add_argument('--out',   default='outputs/generated')
-    args = p.parse_args()
-
-    model, ckpt, device = load_model()
-    print(f"Loaded: epoch={ckpt['epoch']}, val_MSE={ckpt['val_loss']:.6f}")
-
-    strip, page = generate_word(model, args.text, device=device, noise_scale=args.noise)
-    if page is None:
-        print('No supported characters.')
-        sys.exit(1)
-
-    os.makedirs(os.path.dirname(args.out) or '.', exist_ok=True)
-    Image.fromarray(page).save(args.out + '.png')
-    export_pdf(page, args.out + '.pdf')
-    print(f"Saved {args.out}.png  and  {args.out}.pdf")

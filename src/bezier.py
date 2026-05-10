@@ -5,9 +5,9 @@ Bézier curve math, rendering, fitting, and label conversion.
 import numpy as np
 from scipy.special import comb
 
-N_CURVES     = 3
+N_CURVES     = 6
 CP_PER_CURVE = 4
-LABEL_DIM    = N_CURVES * CP_PER_CURVE * 2   # 24
+LABEL_DIM    = N_CURVES * CP_PER_CURVE * 2   # 48
 
 
 def bezier_point(t, pts):
