@@ -14,16 +14,16 @@ from data     import CHAR_TO_IDX
 
 app = Flask(__name__)
 
-_MODEL = _CKPT = _DEVICE = _REFS = None
+_MODEL = _CKPT = _DEVICE = None
 OUTPUTS = os.path.join(os.path.dirname(__file__), 'outputs')
 os.makedirs(OUTPUTS, exist_ok=True)
 
 
 def _get_model():
-    global _MODEL, _CKPT, _DEVICE, _REFS
+    global _MODEL, _CKPT, _DEVICE
     if _MODEL is None:
-        _MODEL, _CKPT, _DEVICE, _REFS = load_model()
-    return _MODEL, _CKPT, _DEVICE, _REFS
+        _MODEL, _CKPT, _DEVICE = load_model()
+    return _MODEL, _CKPT, _DEVICE
 
 
 @app.route('/')
@@ -34,12 +34,11 @@ def index():
 @app.route('/status')
 def status():
     try:
-        _, ckpt, _, _ = _get_model()
+        _, ckpt, _ = _get_model()
         return jsonify({
-            'ready':   True,
-            'epoch':   ckpt.get('epoch'),
-            'loss':    round(float(ckpt.get('val_loss', 0)), 6),
-            'writers': ckpt.get('writer_names', []),
+            'ready': True,
+            'epoch': ckpt.get('epoch'),
+            'loss':  round(float(ckpt.get('val_loss', 0)), 6),
         })
     except Exception as e:
         return jsonify({'ready': False, 'error': str(e)})
@@ -49,7 +48,6 @@ def status():
 def generate():
     data        = request.get_json(force=True)
     text        = data.get('text', '').strip()
-    writer_idx  = int(data.get('writer_idx', 0))
     noise_scale = float(data.get('noise', 0.018))
 
     supported = ''.join(c for c in text if c in CHAR_TO_IDX)
@@ -57,12 +55,8 @@ def generate():
         return jsonify({'error': 'Input must contain A-Z, a-z, or 0-9'}), 400
 
     try:
-        model, ckpt, device, refs = _get_model()
-        num_writers = ckpt.get('num_writers', 6)
-        writer_idx  = max(0, min(writer_idx, num_writers - 1))
-
-        _, page = generate_word(model, supported, writer_idx=writer_idx,
-                                device=device, refs=refs, noise_scale=noise_scale)
+        model, _, device = _get_model()
+        _, page = generate_word(model, supported, device=device, noise_scale=noise_scale)
 
         buf = io.BytesIO()
         Image.fromarray(page).save(buf, format='PNG')
@@ -78,7 +72,6 @@ def generate():
 def download():
     data        = request.get_json(force=True)
     text        = data.get('text', '').strip()
-    writer_idx  = int(data.get('writer_idx', 0))
     noise_scale = float(data.get('noise', 0.018))
 
     supported = ''.join(c for c in text if c in CHAR_TO_IDX)
@@ -86,12 +79,8 @@ def download():
         return jsonify({'error': 'No supported characters'}), 400
 
     try:
-        model, ckpt, device, refs = _get_model()
-        num_writers = ckpt.get('num_writers', 6)
-        writer_idx  = max(0, min(writer_idx, num_writers - 1))
-
-        _, page = generate_word(model, supported, writer_idx=writer_idx,
-                                device=device, refs=refs, noise_scale=noise_scale)
+        model, _, device = _get_model()
+        _, page = generate_word(model, supported, device=device, noise_scale=noise_scale)
         pdf_path = os.path.join(OUTPUTS, 'handwriting.pdf')
         export_pdf(page, pdf_path)
         return send_file(pdf_path, as_attachment=True, download_name='handwriting.pdf')

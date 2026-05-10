@@ -1,9 +1,9 @@
 """
-Training loop for HandwritingCNN (real image → Bézier curve regression).
+Training loop for CharNet (char_idx → 24 Bézier control points).
 
-Loss: MSE on 24 control-point coordinates in [0, 1].
-The CNN sees a real handwriting image and predicts the Bézier skeleton curves
-for that character — implicitly encoding each writer's stroke style.
+Loss  : MSE on 24 normalised control-point coordinates.
+Data  : cached Bézier labels extracted from real handwriting (bezier_labels.npy).
+Epochs: 200 — fast because no image loading during training.
 
 Run from project root:
     python src/train.py
@@ -15,16 +15,16 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, random_split
 
 sys.path.insert(0, os.path.dirname(__file__))
-from data  import load_all_data, HandwritingDataset
-from model import HandwritingCNN
+from data  import load_all_data, BezierDataset
+from model import CharNet
 
 # ── config ───────────────────────────────────────────────────────────────────
 _HERE      = os.path.dirname(os.path.abspath(__file__))
 DATA_ROOT  = os.path.normpath(os.path.join(_HERE, '..', 'Data', 'Writers_pngs'))
 CACHE_PATH = os.path.normpath(os.path.join(_HERE, '..', 'Data', 'bezier_labels.npy'))
 CKPT_DIR   = os.path.normpath(os.path.join(_HERE, '..', 'checkpoints'))
-NUM_EPOCHS = 100
-BATCH_SIZE = 32
+NUM_EPOCHS = 200
+BATCH_SIZE = 64
 LR         = 1e-3
 VAL_SPLIT  = 0.10
 
@@ -33,24 +33,21 @@ def main():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    print('\nLoading dataset (first run builds label cache — may take a few minutes)...')
+    print('\nLoading dataset (first run extracts Bézier labels — ~5 min)...')
     records, writer_names = load_all_data(DATA_ROOT, cache_path=CACHE_PATH)
 
-    dataset  = HandwritingDataset(records)
+    dataset  = BezierDataset(records)
     val_size = int(len(dataset) * VAL_SPLIT)
     train_ds, val_ds = random_split(
         dataset, [len(dataset) - val_size, val_size],
         generator=torch.Generator().manual_seed(42),
     )
 
-    nw = 2 if device.type == 'cuda' else 0
-    train_loader = DataLoader(train_ds, BATCH_SIZE, shuffle=True,
-                              num_workers=nw, pin_memory=device.type == 'cuda')
-    val_loader   = DataLoader(val_ds,   BATCH_SIZE, shuffle=False,
-                              num_workers=nw, pin_memory=device.type == 'cuda')
+    train_loader = DataLoader(train_ds, BATCH_SIZE, shuffle=True,  num_workers=0)
+    val_loader   = DataLoader(val_ds,   BATCH_SIZE, shuffle=False, num_workers=0)
     print(f'Train: {len(train_ds)}  |  Val: {len(val_ds)}\n')
 
-    model     = HandwritingCNN(num_chars=62).to(device)
+    model     = CharNet(num_chars=62).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=NUM_EPOCHS, eta_min=1e-5)
 
@@ -67,32 +64,30 @@ def main():
         # ── train ──────────────────────────────────────────────────────────
         model.train()
         tl = tn = 0
-        for img, char_idx, _, label in train_loader:
-            img      = img.to(device)
+        for char_idx, label in train_loader:
             char_idx = char_idx.to(device)
             label    = label.to(device)
 
-            pred = model(img, char_idx)
+            pred = model(char_idx)
             loss = F.mse_loss(pred, label)
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            tl += loss.item() * img.size(0)
-            tn += img.size(0)
+            tl += loss.item() * char_idx.size(0)
+            tn += char_idx.size(0)
 
         # ── validate ────────────────────────────────────────────────────────
         model.eval()
         vl = vn = 0
         with torch.no_grad():
-            for img, char_idx, _, label in val_loader:
-                img      = img.to(device)
+            for char_idx, label in val_loader:
                 char_idx = char_idx.to(device)
                 label    = label.to(device)
-                pred     = model(img, char_idx)
-                vl      += F.mse_loss(pred, label).item() * img.size(0)
-                vn      += img.size(0)
+                pred     = model(char_idx)
+                vl      += F.mse_loss(pred, label).item() * char_idx.size(0)
+                vn      += char_idx.size(0)
 
         scheduler.step()
         lr         = scheduler.get_last_lr()[0]
@@ -112,8 +107,8 @@ def main():
             }, os.path.join(CKPT_DIR, 'style_net.pt'))
             print(f'  >> style_net.pt saved (val_MSE={val_loss:.6f})', flush=True)
 
-    print(f'\nBest val MSE: {best_val:.6f}')
-    print(f'Checkpoint  : {os.path.join(CKPT_DIR, "style_net.pt")}')
+    print(f'\nBest val MSE : {best_val:.6f}')
+    print(f'Checkpoint   : {os.path.join(CKPT_DIR, "style_net.pt")}')
 
 
 if __name__ == '__main__':

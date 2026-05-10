@@ -1,6 +1,6 @@
 """
 Inference pipeline:
-  load model → pick real writer reference image → CNN predicts Bézier curves
+  load model → char_idx → CNN predicts Bézier curves
   → add variation → render → stitch word → build ruled page → optional PDF
 """
 import os
@@ -11,39 +11,12 @@ from PIL import Image, ImageDraw
 import torch
 
 sys.path.insert(0, os.path.dirname(__file__))
-from model  import HandwritingCNN
+from model  import CharNet
 from bezier import label_to_curves, add_variation, draw_bezier
-from data   import CHAR_TO_IDX, scale_to_canvas, CANVAS_SIZE
+from data   import CHAR_TO_IDX, CANVAS_SIZE
 
 _HERE     = os.path.dirname(os.path.abspath(__file__))
 CKPT_PATH = os.path.normpath(os.path.join(_HERE, '..', 'checkpoints', 'style_net.pt'))
-DATA_ROOT = os.path.normpath(os.path.join(_HERE, '..', 'Data', 'Writers_pngs'))
-
-SKIP_DIRS = {'Writers_Zip', 'output_preview', '__pycache__'}
-
-
-def _load_writer_refs(data_root):
-    """Return {writer_idx: [PIL.Image, ...]} for each writer folder."""
-    refs = {}
-    dirs = sorted(
-        [e for e in os.scandir(data_root) if e.is_dir() and e.name not in SKIP_DIRS],
-        key=lambda e: e.name,
-    )
-    for wid, entry in enumerate(dirs):
-        imgs = [
-            Image.open(os.path.join(entry.path, f)).convert('L')
-            for f in sorted(os.listdir(entry.path))
-            if f.lower().endswith('.png')
-        ]
-        refs[wid] = imgs
-    return refs
-
-
-def _img_to_tensor(pil_img, device):
-    arr = np.array(pil_img.resize((CANVAS_SIZE, CANVAS_SIZE)))
-    arr = scale_to_canvas(np.where(arr < 128, 0, 255).astype(np.uint8), target_fill=0.80)
-    t   = torch.from_numpy(arr.astype(np.float32) / 127.5 - 1.0).unsqueeze(0).unsqueeze(0)
-    return t.to(device)
 
 
 # ── model loading ─────────────────────────────────────────────────────────────
@@ -52,25 +25,22 @@ def load_model(ckpt_path=None, device=None):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     path  = ckpt_path or CKPT_PATH
     ckpt  = torch.load(path, map_location=device, weights_only=False)
-    model = HandwritingCNN(num_chars=62).to(device)
+    model = CharNet(num_chars=62).to(device)
     model.load_state_dict(ckpt['model_state'])
     model.eval()
-    refs  = _load_writer_refs(DATA_ROOT)
-    return model, ckpt, device, refs
+    return model, ckpt, device
 
 
 # ── single character generation ───────────────────────────────────────────────
-def generate_char(model, char, writer_refs, device, noise_scale=0.018):
+def generate_char(model, char, device, noise_scale=0.018):
     """
-    Pick a real reference image from writer_refs, predict Bézier curves, render.
+    Predict Bézier curves for char, add natural variation, render to canvas.
     Returns uint8 numpy array (128, 128).
     """
-    ref_img  = random.choice(writer_refs)
-    tensor   = _img_to_tensor(ref_img, device)
     char_idx = torch.tensor([CHAR_TO_IDX[char]], device=device)
 
     with torch.no_grad():
-        label = model(tensor, char_idx).squeeze().cpu().numpy()   # (24,)
+        label = model(char_idx).squeeze().cpu().numpy()   # (24,)
 
     curves = label_to_curves(label)
     varied = add_variation(curves, noise_scale=noise_scale)
@@ -104,14 +74,10 @@ def build_page(strip, canvas_h=420, canvas_w=950):
     return page_arr
 
 
-def generate_word(model, word, writer_idx=0, device=None, refs=None, noise_scale=0.018):
+def generate_word(model, word, device=None, noise_scale=0.018, **kwargs):
     """Generate all characters of word and stitch onto a ruled page."""
-    writer_refs = refs.get(writer_idx, []) if refs else []
-    if not writer_refs:
-        raise ValueError(f'No reference images for writer {writer_idx}')
-
     chars = [
-        generate_char(model, ch, writer_refs, device, noise_scale)
+        generate_char(model, ch, device, noise_scale)
         for ch in word if ch in CHAR_TO_IDX
     ]
     if not chars:
@@ -137,18 +103,15 @@ def export_pdf(page_np, pdf_path):
 if __name__ == '__main__':
     import argparse
     p = argparse.ArgumentParser()
-    p.add_argument('text',     help='Text to generate (A-Z a-z 0-9)')
-    p.add_argument('--writer', type=int,   default=0,     help='Writer index (0-5)')
-    p.add_argument('--noise',  type=float, default=0.018, help='Variation noise scale')
-    p.add_argument('--out',    default='outputs/generated')
+    p.add_argument('text',    help='Text to generate (A-Z a-z 0-9)')
+    p.add_argument('--noise', type=float, default=0.018, help='Variation noise (default 0.018)')
+    p.add_argument('--out',   default='outputs/generated')
     args = p.parse_args()
 
-    model, ckpt, device, refs = load_model()
-    print(f"Loaded: epoch={ckpt['epoch']}, val_loss={ckpt['val_loss']:.6f}")
-    print(f"Writers: {ckpt['writer_names']}")
+    model, ckpt, device = load_model()
+    print(f"Loaded: epoch={ckpt['epoch']}, val_MSE={ckpt['val_loss']:.6f}")
 
-    strip, page = generate_word(model, args.text, writer_idx=args.writer,
-                                device=device, refs=refs, noise_scale=args.noise)
+    strip, page = generate_word(model, args.text, device=device, noise_scale=args.noise)
     if page is None:
         print('No supported characters.')
         sys.exit(1)

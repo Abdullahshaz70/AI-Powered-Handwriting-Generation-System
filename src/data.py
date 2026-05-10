@@ -116,21 +116,20 @@ def load_all_data(writers_root, cache_path=None):
     return records, writer_names
 
 
-class HandwritingDataset(Dataset):
+class BezierDataset(Dataset):
     """
-    Returns (img_tensor, char_idx, writer_idx, bezier_label).
-    img_tensor   : float32, shape (1, 128, 128), normalised to [-1, 1].
-    bezier_label : float32, shape (24,), Bézier control points in [0, 1].
+    Lightweight dataset — no image loading during training.
+    Returns (char_idx_tensor, bezier_label) only.
+    bezier_label: float32, shape (24,), Bézier control points in [0, 1].
     """
     def __init__(self, records):
-        self.records = records
+        self.items = [
+            (torch.tensor(char_idx, dtype=torch.long), torch.from_numpy(label))
+            for _, char_idx, _, label in records
+        ]
 
     def __len__(self):
-        return len(self.records)
+        return len(self.items)
 
     def __getitem__(self, idx):
-        img_path, char_idx, writer_idx, label = self.records[idx]
-        arr = np.array(Image.open(img_path).convert('L').resize((CANVAS_SIZE, CANVAS_SIZE)))
-        arr = scale_to_canvas(np.where(arr < 128, 0, 255).astype(np.uint8), target_fill=0.80)
-        tensor = torch.from_numpy(arr.astype(np.float32) / 127.5 - 1.0).unsqueeze(0)
-        return tensor, char_idx, writer_idx, torch.from_numpy(label)
+        return self.items[idx]
