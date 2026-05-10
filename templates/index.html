@@ -2,267 +2,136 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8"/>
-<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
 <title>AI Handwriting Generator</title>
 <style>
-  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
-  body {
-    font-family: 'Segoe UI', system-ui, sans-serif;
-    background: #0f172a;
-    color: #e2e8f0;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 2rem 1rem;
-  }
-
-  header {
-    text-align: center;
-    margin-bottom: 2rem;
-  }
-  header h1 {
-    font-size: 2rem;
-    font-weight: 700;
-    background: linear-gradient(135deg, #60a5fa, #a78bfa);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-  }
-  header p { color: #94a3b8; margin-top: .4rem; font-size: .95rem; }
-
-  .card {
-    background: #1e293b;
-    border: 1px solid #334155;
-    border-radius: 1rem;
-    padding: 1.8rem;
-    width: 100%;
-    max-width: 700px;
-  }
-
-  label { display: block; font-size: .85rem; color: #94a3b8; margin-bottom: .4rem; }
-
-  input[type="text"] {
-    width: 100%;
-    padding: .75rem 1rem;
-    border-radius: .5rem;
-    border: 1px solid #475569;
-    background: #0f172a;
-    color: #e2e8f0;
-    font-size: 1.1rem;
-    outline: none;
-    transition: border-color .2s;
-  }
-  input[type="text"]:focus { border-color: #60a5fa; }
-
-  .slider-row {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    margin-top: 1.2rem;
-  }
-  input[type="range"] {
-    flex: 1;
-    accent-color: #60a5fa;
-  }
-  #noiseVal {
-    width: 3rem;
-    text-align: right;
-    color: #60a5fa;
-    font-weight: 600;
-  }
-
-  .btn-row {
-    display: flex;
-    gap: .75rem;
-    margin-top: 1.4rem;
-  }
-  button {
-    flex: 1;
-    padding: .75rem;
-    border-radius: .5rem;
-    border: none;
-    font-size: 1rem;
-    font-weight: 600;
-    cursor: pointer;
-    transition: opacity .2s, transform .1s;
-  }
-  button:active { transform: scale(.97); }
-  #btnGenerate  { background: linear-gradient(135deg, #3b82f6, #6366f1); color: #fff; }
-  #btnDownload  { background: #1e293b; color: #94a3b8; border: 1px solid #475569; }
-  #btnDownload:hover { border-color: #60a5fa; color: #e2e8f0; }
-  button:disabled { opacity: .4; cursor: not-allowed; }
-
-  #status {
-    margin-top: 1rem;
-    font-size: .85rem;
-    color: #94a3b8;
-    min-height: 1.2em;
-  }
-
-  #resultCard {
-    display: none;
-    margin-top: 1.5rem;
-  }
-  #resultCard h2 { font-size: 1rem; color: #94a3b8; margin-bottom: .75rem; }
-  #outputImg {
-    width: 100%;
-    border-radius: .5rem;
-    border: 1px solid #334155;
-    image-rendering: crisp-edges;
-    background: #fff;
-  }
-
-  #modelBadge {
-    margin-top: 1rem;
-    font-size: .78rem;
-    color: #475569;
-    text-align: center;
-  }
-
-  .pill {
-    display: inline-block;
-    padding: .15rem .55rem;
-    border-radius: 999px;
-    font-size: .75rem;
-    font-weight: 600;
-  }
-  .pill-green { background: #14532d; color: #4ade80; }
-  .pill-red   { background: #450a0a; color: #f87171; }
-
-  footer {
-    margin-top: 2.5rem;
-    color: #475569;
-    font-size: .8rem;
-    text-align: center;
-  }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:#0f172a;color:#e2e8f0;
+  min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:2rem 1rem}
+header{text-align:center;margin-bottom:2rem}
+header h1{font-size:2rem;font-weight:700;background:linear-gradient(135deg,#60a5fa,#a78bfa);
+  -webkit-background-clip:text;-webkit-text-fill-color:transparent}
+header p{color:#94a3b8;margin-top:.4rem;font-size:.95rem}
+.card{background:#1e293b;border:1px solid #334155;border-radius:1rem;padding:1.8rem;
+  width:100%;max-width:720px}
+.field{margin-bottom:1.2rem}
+label{display:block;font-size:.82rem;color:#94a3b8;margin-bottom:.4rem;font-weight:500}
+input[type=text],select{width:100%;padding:.7rem 1rem;border-radius:.5rem;
+  border:1px solid #475569;background:#0f172a;color:#e2e8f0;font-size:1rem;outline:none;
+  transition:border-color .2s}
+input[type=text]:focus,select:focus{border-color:#60a5fa}
+select option{background:#1e293b}
+.btn-row{display:flex;gap:.75rem;margin-top:1.4rem}
+button{flex:1;padding:.75rem;border-radius:.5rem;border:none;font-size:1rem;
+  font-weight:600;cursor:pointer;transition:opacity .15s,transform .1s}
+button:active{transform:scale(.97)}
+button:disabled{opacity:.4;cursor:not-allowed}
+#btnGen{background:linear-gradient(135deg,#3b82f6,#6366f1);color:#fff}
+#btnDl{background:#1e293b;color:#94a3b8;border:1px solid #475569}
+#btnDl:hover:not(:disabled){border-color:#60a5fa;color:#e2e8f0}
+#status{margin-top:1rem;font-size:.85rem;color:#94a3b8;min-height:1.2em}
+#result{display:none;margin-top:1.5rem}
+#result h2{font-size:.9rem;color:#94a3b8;margin-bottom:.75rem}
+#outImg{width:100%;border-radius:.5rem;border:1px solid #334155;background:#fff;
+  image-rendering:crisp-edges}
+.badge{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.75rem;font-weight:600}
+.green{background:#14532d;color:#4ade80}.red{background:#450a0a;color:#f87171}
+footer{margin-top:2.5rem;color:#475569;font-size:.8rem;text-align:center}
 </style>
 </head>
 <body>
-
 <header>
   <h1>AI Handwriting Generator</h1>
-  <p>CNN → Bézier curves → rendered handwriting</p>
+  <p>Font image → CNN (U-Net) → writer's handwriting style</p>
 </header>
 
 <div class="card">
-  <label for="textInput">Text to generate (A–Z, a–z, 0–9)</label>
-  <input id="textInput" type="text" placeholder="Hello123" maxlength="30" value="Hello"/>
+  <div class="field">
+    <label for="txt">Text (A–Z, a–z, 0–9 only)</label>
+    <input id="txt" type="text" value="Hello" maxlength="25" placeholder="Hello123"/>
+  </div>
 
-  <div class="slider-row">
-    <label style="margin:0;white-space:nowrap;">Variation (noise)</label>
-    <input id="noiseSlider" type="range" min="0.005" max="0.05" step="0.005" value="0.02"/>
-    <span id="noiseVal">0.020</span>
+  <div class="field">
+    <label for="writerSel">Writer style</label>
+    <select id="writerSel">
+      <option value="0">Loading writers…</option>
+    </select>
   </div>
 
   <div class="btn-row">
-    <button id="btnGenerate">Generate</button>
-    <button id="btnDownload" disabled>Download PDF</button>
+    <button id="btnGen">Generate</button>
+    <button id="btnDl" disabled>Download PDF</button>
   </div>
 
   <div id="status">Checking model…</div>
 
-  <div id="resultCard">
-    <h2>Generated output</h2>
-    <img id="outputImg" alt="Generated handwriting"/>
+  <div id="result">
+    <h2>Generated handwriting</h2>
+    <img id="outImg" alt="Generated handwriting"/>
   </div>
-
-  <div id="modelBadge"></div>
 </div>
 
-<footer>
-  BSAI24082 · Abdullah Shahzad · AI-Powered Handwriting Generation System
-</footer>
+<footer>BSAI24082 · Abdullah Shahzad · AI-Powered Handwriting Generation System</footer>
 
 <script>
-const $ = id => document.getElementById(id);
+const $=id=>document.getElementById(id);
+let lastText='', lastWriter=0;
 
-const noiseSlider  = $('noiseSlider');
-const noiseVal     = $('noiseVal');
-const btnGenerate  = $('btnGenerate');
-const btnDownload  = $('btnDownload');
-const statusEl     = $('status');
-const resultCard   = $('resultCard');
-const outputImg    = $('outputImg');
-const modelBadge   = $('modelBadge');
-
-let lastText  = '';
-let lastNoise = 0.02;
-
-noiseSlider.addEventListener('input', () => {
-  noiseVal.textContent = parseFloat(noiseSlider.value).toFixed(3);
-});
-
-// Check model status on load
-(async () => {
-  try {
-    const r = await fetch('/status');
-    const d = await r.json();
-    if (d.ready) {
-      statusEl.textContent = '';
-      modelBadge.innerHTML =
-        `<span class="pill pill-green">Model ready</span>` +
-        ` — epoch ${d.epoch}, val MSE ${d.loss}`;
+async function checkStatus(){
+  try{
+    const d=await(await fetch('/status')).json();
+    if(d.ready){
+      $('status').innerHTML='<span class="badge green">Model ready</span>'
+        +` epoch ${d.epoch} · val L1 ${d.loss}`;
+      const sel=$('writerSel');
+      sel.innerHTML='';
+      (d.writers||[]).forEach((w,i)=>{
+        const o=document.createElement('option');
+        o.value=i; o.textContent=w.replace('writer_',''); sel.appendChild(o);
+      });
     } else {
-      statusEl.innerHTML =
-        `<span class="pill pill-red">Model not found</span> ` +
-        `Run <code>python src/train.py</code> first.`;
-      btnGenerate.disabled = true;
+      $('status').innerHTML='<span class="badge red">No model</span> '
+        +'Run <code>python src/train.py</code> first.';
+      $('btnGen').disabled=true;
     }
   } catch {
-    statusEl.textContent = 'Server not reachable.';
+    $('status').textContent='Cannot reach server.';
   }
-})();
+}
+checkStatus();
 
-btnGenerate.addEventListener('click', async () => {
-  const text  = $('textInput').value.trim();
-  const noise = parseFloat(noiseSlider.value);
-  if (!text) { statusEl.textContent = 'Please enter some text.'; return; }
+$('btnGen').addEventListener('click', async()=>{
+  const text=$('txt').value.trim();
+  const writer=parseInt($('writerSel').value);
+  if(!text){$('status').textContent='Enter some text.';return}
 
-  btnGenerate.disabled = true;
-  btnDownload.disabled = true;
-  statusEl.textContent = 'Generating…';
+  $('btnGen').disabled=true; $('btnDl').disabled=true;
+  $('status').textContent='Generating…';
 
-  try {
-    const r = await fetch('/generate', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({text, noise}),
-    });
-    const d = await r.json();
+  const r=await fetch('/generate',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text,writer_idx:writer})});
+  const d=await r.json();
 
-    if (d.error) {
-      statusEl.textContent = '⚠ ' + d.error;
-    } else {
-      outputImg.src    = 'data:image/png;base64,' + d.image;
-      resultCard.style.display = 'block';
-      lastText  = d.rendered;
-      lastNoise = noise;
-      statusEl.textContent = `Rendered: "${d.rendered}"`;
-      btnDownload.disabled = false;
-    }
-  } catch (e) {
-    statusEl.textContent = 'Request failed: ' + e.message;
+  if(d.error){
+    $('status').textContent='Error: '+d.error;
+  } else {
+    $('outImg').src='data:image/png;base64,'+d.image;
+    $('result').style.display='block';
+    lastText=d.rendered; lastWriter=writer;
+    $('status').textContent=`Rendered "${d.rendered}" in ${$('writerSel').selectedOptions[0].text} style`;
+    $('btnDl').disabled=false;
   }
-
-  btnGenerate.disabled = false;
+  $('btnGen').disabled=false;
 });
 
-btnDownload.addEventListener('click', async () => {
-  const r = await fetch('/download', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({text: lastText, noise: lastNoise}),
-  });
-  if (!r.ok) {
-    const d = await r.json();
-    statusEl.textContent = '⚠ ' + d.error;
-    return;
-  }
-  const blob = await r.blob();
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url; a.download = 'handwriting.pdf'; a.click();
+$('btnDl').addEventListener('click',async()=>{
+  const r=await fetch('/download',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({text:lastText,writer_idx:lastWriter})});
+  if(!r.ok){const d=await r.json();$('status').textContent='Error: '+d.error;return}
+  const url=URL.createObjectURL(await r.blob());
+  Object.assign(document.createElement('a'),{href:url,download:'handwriting.pdf'}).click();
   URL.revokeObjectURL(url);
 });
 </script>
