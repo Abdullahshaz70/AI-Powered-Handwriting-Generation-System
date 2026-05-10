@@ -110,7 +110,7 @@ def load_all_data(writers_root, cache_path=None):
 
     if cache_path:
         np.save(cache_path, label_cache)
-        print(f'  Saved label cache → {cache_path}')
+        print(f'  Saved label cache: {cache_path}')
 
     print(f'Total: {len(records)} images, {len(writer_names)} writers')
     return records, writer_names
