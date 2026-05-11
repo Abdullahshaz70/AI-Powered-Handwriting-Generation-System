@@ -27,6 +27,7 @@ NUM_EPOCHS = 300
 BATCH_SIZE = 64
 LR         = 1e-3
 VAL_SPLIT  = 0.10
+WRITER_FILTER = {'writer_Fatima'}
 
 
 def main():
@@ -34,7 +35,11 @@ def main():
     print(f'Device: {device}')
 
     print('\nLoading dataset...')
-    records, writer_names = load_all_data(DATA_ROOT, cache_path=CACHE_PATH)
+    records, writer_names = load_all_data(
+        DATA_ROOT,
+        cache_path=CACHE_PATH,
+        include_writers=WRITER_FILTER,
+    )
 
     dataset  = BezierDataset(records)
     val_size = int(len(dataset) * VAL_SPLIT)
