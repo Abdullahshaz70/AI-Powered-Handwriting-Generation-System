@@ -7,3 +7,36 @@ scikit-image>=0.21.0
 opencv-contrib-python>=4.8.0
 reportlab>=4.0.0
 Flask>=3.0.0
+
+
+
+
+
+
+
+
+  # Activate venv first (from project root)
+  .\.venv\Scripts\Activate.ps1
+
+  # Approach 5 — works immediately, no training needed
+  cd approaches\05_CharNet
+  python run.py
+  # Output: outputs/lc_a.png, uc_A.png, digit_0.png ... + grid.png (63 files)
+
+  # Approaches 1, 3, 4 — trains first, then generates
+  cd approaches\01_GAN
+  python run.py --epochs 30        # increase to 100+ for better quality
+
+  cd approaches\03_FontToHandwriting_CNN
+  python run.py --epochs 20
+
+  cd approaches\04_BezierRegression_RealImages
+  python run.py --epochs 30        # note: first run builds bezier cache (~5 min)
+
+  # Approach 2 — classifier (no generation)
+  cd approaches\02_MultiTaskCNN
+  python run.py --epochs 30
+  # Output: outputs/predictions_grid.png (real images with predicted labels)
+
+  All outputs go to approaches/0X_NAME/outputs/. Files are named lc_a.png / uc_A.png / digit_0.png to avoid Windows case-insensitive filesystem collisions. Each approach also
+  saves a grid.png showing all characters in one image.
