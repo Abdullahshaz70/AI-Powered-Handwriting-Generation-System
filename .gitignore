@@ -1,5 +1,5 @@
-# Model checkpoints — track generator.pt but ignore intermediate saves
-checkpoints/best_model.pt
+# Root-level checkpoints folder (legacy — checkpoints now live in approaches/*/checkpoints/)
+/checkpoints/
 
 # Generated outputs
 outputs/

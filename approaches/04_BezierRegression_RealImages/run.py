@@ -1,13 +1,17 @@
 """
 Approach 4 — Bézier Regression from Real Images
-Trains if no checkpoint found, then generates a-z A-Z 0-9 PNGs for each writer.
 
-Run from this folder:
-    python run.py
-    python run.py --epochs 50
+  Generate only (default):
+      python run.py
+      → needs checkpoints/style_net.pt  (train in Colab first)
+
+  Train then generate (Colab / GPU):
+      python run.py --train --epochs 100
 """
 import os, sys, argparse, random
 import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, random_split
 from PIL import Image
 import numpy as np
 
@@ -18,13 +22,11 @@ from data    import load_all_data, HandwritingDataset, CHAR_TO_IDX, scale_to_can
 from model   import HandwritingCNN
 from bezier  import label_to_curves, add_variation, draw_bezier
 
-from torch.utils.data import DataLoader, random_split
-import torch.nn.functional as F
-
 DATA_ROOT  = os.path.normpath(os.path.join(_HERE, '..', '..', 'Data', 'Writers_pngs'))
 CACHE_PATH = os.path.normpath(os.path.join(_HERE, '..', '..', 'Data', 'bezier_labels.npy'))
+CKPT_DIR   = os.path.join(_HERE, 'checkpoints')
+CKPT_PATH  = os.path.join(CKPT_DIR, 'style_net.pt')
 OUT_DIR    = os.path.join(_HERE, 'outputs')
-CKPT_PATH  = os.path.join(OUT_DIR, 'style_net.pt')
 
 SKIP_DIRS = {'Writers_Zip', 'output_preview', '__pycache__'}
 
@@ -48,7 +50,7 @@ def _img_to_tensor(pil_img, device):
 
 
 def train(epochs, device):
-    print(f'Loading data (builds bezier_labels.npy cache on first run — may take a few minutes) ...')
+    print('Loading data (builds bezier_labels.npy cache on first run — a few minutes) ...')
     records, writer_names = load_all_data(DATA_ROOT, cache_path=CACHE_PATH)
     dataset  = HandwritingDataset(records)
     val_n    = max(1, int(len(dataset) * 0.1))
@@ -77,9 +79,10 @@ def train(epochs, device):
         scheduler.step()
         print(f'  Epoch {ep:3d}/{epochs}  val_MSE={val_loss/len(val_loader):.6f}')
 
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
     torch.save({'model_state': model.state_dict(), 'num_writers': len(writer_names),
-                'writer_names': writer_names, 'epoch': epochs}, CKPT_PATH)
+                'writer_names': writer_names, 'epoch': epochs,
+                'val_loss': val_loss / len(val_loader)}, CKPT_PATH)
     print(f'Checkpoint -> {CKPT_PATH}')
     return model, writer_names
 
@@ -91,7 +94,7 @@ def load_ckpt(device):
     return model, ck['writer_names']
 
 
-def generate_char(model, char, ref_img, device):
+def _generate_char(model, char, ref_img, device):
     tensor   = _img_to_tensor(ref_img, device)
     char_idx = torch.tensor([CHAR_TO_IDX[char]], device=device)
     with torch.no_grad():
@@ -106,25 +109,24 @@ def generate_pngs(model, writer_names, device):
     refs  = _load_writer_refs(DATA_ROOT)
     chars = [c for c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
              if c in CHAR_TO_IDX]
-    os.makedirs(OUT_DIR, exist_ok=True)
 
+    def fname(writer_idx, ch):
+        if ch.isupper():  return f'writer{writer_idx}_uc_{ch}.png'
+        if ch.isdigit():  return f'writer{writer_idx}_digit_{ch}.png'
+        return f'writer{writer_idx}_lc_{ch}.png'
+
+    os.makedirs(OUT_DIR, exist_ok=True)
     for writer_idx, writer_name in enumerate(writer_names):
         writer_refs = refs.get(writer_idx, [])
         if not writer_refs:
-            print(f'  No refs for writer {writer_idx}, skipping')
             continue
-
-        def fname(ch):
-            if ch.isupper():  return f'writer{writer_idx}_uc_{ch}.png'
-            if ch.isdigit():  return f'writer{writer_idx}_digit_{ch}.png'
-            return f'writer{writer_idx}_lc_{ch}.png'
 
         imgs = []
         for ch in chars:
             ref_img = random.choice(writer_refs)
-            arr     = generate_char(model, ch, ref_img, device)
+            arr     = _generate_char(model, ch, ref_img, device)
             imgs.append(arr)
-            Image.fromarray(arr).save(os.path.join(OUT_DIR, fname(ch)))
+            Image.fromarray(arr).save(os.path.join(OUT_DIR, fname(writer_idx, ch)))
 
         cols, H, W = 10, CANVAS_SIZE, CANVAS_SIZE
         rows = (len(imgs) + cols - 1) // cols
@@ -140,18 +142,22 @@ def generate_pngs(model, writer_names, device):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('--epochs', type=int, default=30,
-                    help='Training epochs if no checkpoint found (default 30; try 100 for quality)')
+    ap.add_argument('--train',  action='store_true', help='Train the model (use on GPU / Colab)')
+    ap.add_argument('--epochs', type=int, default=100, help='Training epochs (default 100)')
     args = ap.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    if os.path.exists(CKPT_PATH):
-        print(f'Checkpoint found — loading {CKPT_PATH}')
+    if args.train:
+        model, writer_names = train(args.epochs, device)
+    elif os.path.exists(CKPT_PATH):
+        print(f'Checkpoint found: {CKPT_PATH}')
         model, writer_names = load_ckpt(device)
     else:
-        print(f'No checkpoint — training for {args.epochs} epochs ...')
-        model, writer_names = train(args.epochs, device)
+        print(f'No checkpoint at {CKPT_PATH}')
+        print('Train in Colab first:  open approaches/04_BezierRegression_RealImages/Colab_BezierReg.ipynb')
+        print('Then place style_net.pt in approaches/04_BezierRegression_RealImages/checkpoints/')
+        sys.exit(1)
 
     generate_pngs(model, writer_names, device)

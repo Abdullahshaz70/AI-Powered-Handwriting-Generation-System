@@ -1,11 +1,12 @@
 """
-Approach 2 — MultiTaskCNN (classifier, not a generator)
-Trains if no checkpoint found, then saves a prediction-grid PNG showing
-real handwriting images with predicted character + writer labels.
+Approach 2 — MultiTaskCNN  (classifier, not a generator)
 
-Run from this folder:
-    python run.py
-    python run.py --epochs 50
+  Generate only (default):
+      python run.py
+      → needs checkpoints/checkpoint.pt  (train in Colab first)
+
+  Train then generate (Colab / GPU):
+      python run.py --train --epochs 100
 """
 import os, sys, argparse
 import torch, torch.nn as nn
@@ -22,18 +23,18 @@ from model   import MultiTaskCNN
 import torchvision.transforms as T
 
 DATA_ROOT = os.path.normpath(os.path.join(_HERE, '..', '..', 'Data', 'Writers_pngs'))
+CKPT_DIR  = os.path.join(_HERE, 'checkpoints')
+CKPT_PATH = os.path.join(CKPT_DIR, 'checkpoint.pt')
 OUT_DIR   = os.path.join(_HERE, 'outputs')
-CKPT_PATH = os.path.join(OUT_DIR, 'checkpoint.pt')
 
 LABEL_TO_CHAR = {v: k for k, v in CHAR_TO_LABEL.items()}
-
-_tf = T.Compose([T.Grayscale(1), T.Resize((128, 128)), T.ToTensor(),
-                 T.Normalize((0.5,), (0.5,))])
+_tf = T.Compose([T.Grayscale(1), T.Resize((128, 128)), T.ToTensor(), T.Normalize((0.5,), (0.5,))])
+SKIP = {'Writers_Zip', 'output_preview', '__pycache__'}
 
 
 class WriterDataset(Dataset):
     def __init__(self, records):
-        self.records = records  # list of (img_path, char_label, writer_id)
+        self.records = records
 
     def __len__(self):
         return len(self.records)
@@ -44,15 +45,10 @@ class WriterDataset(Dataset):
 
 
 def load_data():
-    raw          = load_all_writers(DATA_ROOT)   # list of (path, char_label)
-    writer_dirs  = sorted(
-        e.name for e in os.scandir(DATA_ROOT) if e.is_dir() and e.name not in {'Writers_Zip', 'output_preview'}
-    )
-    writer_map   = {name: i for i, name in enumerate(writer_dirs)}
-    records = []
-    for path, char_label in raw:
-        writer_name = os.path.basename(os.path.dirname(path))
-        records.append((path, char_label, writer_map.get(writer_name, 0)))
+    raw         = load_all_writers(DATA_ROOT)
+    writer_dirs = sorted(e.name for e in os.scandir(DATA_ROOT) if e.is_dir() and e.name not in SKIP)
+    writer_map  = {name: i for i, name in enumerate(writer_dirs)}
+    records = [(p, cl, writer_map.get(os.path.basename(os.path.dirname(p)), 0)) for p, cl in raw]
     return records, writer_dirs
 
 
@@ -88,7 +84,7 @@ def train(epochs, device):
                 total   += imgs.size(0)
         print(f'  Epoch {ep:3d}/{epochs}  char_acc={correct/total:.3f}')
 
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
     torch.save({'model': model.state_dict(), 'num_writers': len(writer_names),
                 'writer_names': writer_names}, CKPT_PATH)
     print(f'Checkpoint -> {CKPT_PATH}')
@@ -103,25 +99,22 @@ def load_ckpt(device):
 
 
 def generate_grid(model, writer_names, device):
-    """Run model on real images, save a grid with predicted char + writer labels."""
     records, _ = load_data()
-    # pick up to 8 samples per character (first letter of each group)
     by_char = {}
     for path, char_label, writer_id in records:
         by_char.setdefault(char_label, []).append((path, writer_id))
 
     samples = []
-    for char_label in sorted(by_char)[:20]:          # show first 20 chars
+    for char_label in sorted(by_char)[:20]:
         for path, writer_id in by_char[char_label][:4]:
             samples.append((path, char_label, writer_id))
 
-    CELL = 144   # cell size (128 image + 16 label strip)
-    COLS = 20
+    CELL, COLS = 144, 20
     ROWS = (len(samples) + COLS - 1) // COLS
     grid = Image.new('L', (COLS * CELL, ROWS * CELL), 240)
     draw = ImageDraw.Draw(grid)
 
-    for i, (path, true_label, writer_id) in enumerate(samples):
+    for i, (path, true_label, _) in enumerate(samples):
         img_pil = Image.open(path).convert('L').resize((128, 128))
         img_t   = _tf(img_pil).unsqueeze(0).to(device)
         with torch.no_grad():
@@ -133,8 +126,7 @@ def generate_grid(model, writer_names, device):
         r, c = divmod(i, COLS)
         x, y = c * CELL, r * CELL
         grid.paste(img_pil, (x, y))
-        label_str = f'T:{true_char} P:{pred_char}'
-        draw.text((x + 2, y + 128), label_str, fill=0)
+        draw.text((x + 2, y + 128), f'T:{true_char} P:{pred_char}', fill=0)
 
     os.makedirs(OUT_DIR, exist_ok=True)
     grid.save(os.path.join(OUT_DIR, 'predictions_grid.png'))
@@ -143,18 +135,22 @@ def generate_grid(model, writer_names, device):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('--epochs', type=int, default=30,
-                    help='Training epochs if no checkpoint found (default 30; try 100 for accuracy)')
+    ap.add_argument('--train',  action='store_true', help='Train the model (use on GPU / Colab)')
+    ap.add_argument('--epochs', type=int, default=100, help='Training epochs (default 100)')
     args = ap.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    if os.path.exists(CKPT_PATH):
-        print(f'Checkpoint found — loading {CKPT_PATH}')
+    if args.train:
+        model, writer_names = train(args.epochs, device)
+    elif os.path.exists(CKPT_PATH):
+        print(f'Checkpoint found: {CKPT_PATH}')
         model, writer_names = load_ckpt(device)
     else:
-        print(f'No checkpoint — training for {args.epochs} epochs ...')
-        model, writer_names = train(args.epochs, device)
+        print(f'No checkpoint at {CKPT_PATH}')
+        print('Train in Colab first:  open approaches/02_MultiTaskCNN/Colab_MultiTaskCNN.ipynb')
+        print('Then place checkpoint.pt in approaches/02_MultiTaskCNN/checkpoints/')
+        sys.exit(1)
 
     generate_grid(model, writer_names, device)

@@ -1,32 +1,31 @@
 """
 Approach 3 — Font-to-Handwriting CNN
-Trains if no checkpoint found, then generates a-z A-Z 0-9 PNGs for each writer.
 
-Run from this folder:
-    python run.py
-    python run.py --epochs 40
+  Generate only (default):
+      python run.py
+      → needs checkpoints/style_net.pt  (train in Colab first)
+
+  Train then generate (Colab / GPU):
+      python run.py --train --epochs 80
 """
 import os, sys, argparse
 import torch
+import torch.nn.functional as F
+from torch.utils.data import DataLoader, random_split
 from PIL import Image
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(_HERE, 'src'))
 
-from data        import load_all_data, HandwritingDataset, CHAR_TO_IDX, IDX_TO_CHAR
+from data        import load_all_data, HandwritingDataset, CHAR_TO_IDX
 from model       import HandwritingStyleNet
-from font_render import render_char
-from generate    import generate_char, stitch_word
-
-import torchvision.transforms as T
-from torch.utils.data import DataLoader, random_split
+from generate    import generate_char
 
 DATA_ROOT = os.path.normpath(os.path.join(_HERE, '..', '..', 'Data', 'Writers_pngs'))
+CKPT_DIR  = os.path.join(_HERE, 'checkpoints')
+CKPT_PATH = os.path.join(CKPT_DIR, 'style_net.pt')
 OUT_DIR   = os.path.join(_HERE, 'outputs')
-CKPT_PATH = os.path.join(OUT_DIR, 'style_net.pt')
-
-_transform = T.Compose([T.Grayscale(1), T.Resize((128, 128)), T.ToTensor(), T.Normalize((0.5,), (0.5,))])
 
 
 def train(epochs, device):
@@ -43,29 +42,26 @@ def train(epochs, device):
     optimizer = torch.optim.Adam(model.parameters(), lr=2e-4, betas=(0.5, 0.999))
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-5)
 
-    import torch.nn.functional as F
     for ep in range(1, epochs + 1):
         model.train()
-        for font_t, real_t, char_idx, writer_idx in train_loader:
+        for font_t, real_t, _, writer_idx in train_loader:
             font_t, real_t = font_t.to(device), real_t.to(device)
-            writer_idx     = writer_idx.to(device)
-            out  = model(font_t, writer_idx)
-            loss = F.l1_loss(out, real_t)
+            loss = F.l1_loss(model(font_t, writer_idx.to(device)), real_t)
             optimizer.zero_grad(); loss.backward(); optimizer.step()
 
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for font_t, real_t, char_idx, writer_idx in val_loader:
+            for font_t, real_t, _, writer_idx in val_loader:
                 font_t, real_t = font_t.to(device), real_t.to(device)
-                writer_idx = writer_idx.to(device)
-                val_loss += F.l1_loss(model(font_t, writer_idx), real_t).item()
+                val_loss += F.l1_loss(model(font_t, writer_idx.to(device)), real_t).item()
         scheduler.step()
         print(f'  Epoch {ep:3d}/{epochs}  val_L1={val_loss/len(val_loader):.4f}')
 
-    os.makedirs(OUT_DIR, exist_ok=True)
+    os.makedirs(CKPT_DIR, exist_ok=True)
     torch.save({'model_state': model.state_dict(), 'num_writers': len(writer_names),
-                'writer_names': writer_names, 'epoch': epochs}, CKPT_PATH)
+                'writer_names': writer_names, 'epoch': epochs, 'val_loss': val_loss/len(val_loader)},
+               CKPT_PATH)
     print(f'Checkpoint -> {CKPT_PATH}')
     return model, writer_names
 
@@ -78,24 +74,22 @@ def load_ckpt(device):
 
 
 def generate_pngs(model, writer_names, device):
-    chars = list('abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789')
+    chars = [c for c in 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+             if c in CHAR_TO_IDX]
+
+    def fname(writer_idx, ch):
+        if ch.isupper():  return f'writer{writer_idx}_uc_{ch}.png'
+        if ch.isdigit():  return f'writer{writer_idx}_digit_{ch}.png'
+        return f'writer{writer_idx}_lc_{ch}.png'
+
     os.makedirs(OUT_DIR, exist_ok=True)
-
     for writer_idx, writer_name in enumerate(writer_names):
-        def fname(ch):
-            if ch.isupper():  return f'writer{writer_idx}_uc_{ch}.png'
-            if ch.isdigit():  return f'writer{writer_idx}_digit_{ch}.png'
-            return f'writer{writer_idx}_lc_{ch}.png'
-
         imgs = []
         for ch in chars:
-            if ch not in CHAR_TO_IDX:
-                continue
             arr = generate_char(model, ch, writer_idx, device)
             imgs.append(arr)
-            Image.fromarray(arr).save(os.path.join(OUT_DIR, fname(ch)))
+            Image.fromarray(arr).save(os.path.join(OUT_DIR, fname(writer_idx, ch)))
 
-        # grid per writer
         cols, H, W = 10, 128, 128
         rows = (len(imgs) + cols - 1) // cols
         grid = np.full((rows*(H+4), cols*(W+4)), 240, np.uint8)
@@ -110,18 +104,22 @@ def generate_pngs(model, writer_names, device):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser()
-    ap.add_argument('--epochs', type=int, default=20,
-                    help='Training epochs if no checkpoint found (default 20; try 80 for quality)')
+    ap.add_argument('--train',  action='store_true', help='Train the model (use on GPU / Colab)')
+    ap.add_argument('--epochs', type=int, default=80, help='Training epochs (default 80)')
     args = ap.parse_args()
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f'Device: {device}')
 
-    if os.path.exists(CKPT_PATH):
-        print(f'Checkpoint found — loading {CKPT_PATH}')
+    if args.train:
+        model, writer_names = train(args.epochs, device)
+    elif os.path.exists(CKPT_PATH):
+        print(f'Checkpoint found: {CKPT_PATH}')
         model, writer_names = load_ckpt(device)
     else:
-        print(f'No checkpoint — training for {args.epochs} epochs ...')
-        model, writer_names = train(args.epochs, device)
+        print(f'No checkpoint at {CKPT_PATH}')
+        print('Train in Colab first:  open approaches/03_FontToHandwriting_CNN/Colab_FontCNN.ipynb')
+        print('Then place style_net.pt in approaches/03_FontToHandwriting_CNN/checkpoints/')
+        sys.exit(1)
 
     generate_pngs(model, writer_names, device)
