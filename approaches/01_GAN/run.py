@@ -12,6 +12,7 @@ import os, sys, argparse
 import torch, torch.nn as nn, torch.optim as optim
 from torch.utils.data import DataLoader
 from PIL import Image
+import torchvision.transforms as T
 import numpy as np
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
