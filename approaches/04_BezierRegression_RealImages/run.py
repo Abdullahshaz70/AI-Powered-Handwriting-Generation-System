@@ -65,7 +65,7 @@ def train(epochs, device):
 
     for ep in range(1, epochs + 1):
         model.train()
-        for imgs, char_idxs, bezier_labels in train_loader:
+        for imgs, char_idxs, _, bezier_labels in train_loader:
             imgs, char_idxs, bezier_labels = imgs.to(device), char_idxs.to(device), bezier_labels.to(device)
             loss = F.mse_loss(model(imgs, char_idxs), bezier_labels)
             optimizer.zero_grad(); loss.backward(); optimizer.step()
@@ -73,7 +73,7 @@ def train(epochs, device):
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
-            for imgs, char_idxs, bezier_labels in val_loader:
+            for imgs, char_idxs, _, bezier_labels in val_loader:
                 imgs, char_idxs, bezier_labels = imgs.to(device), char_idxs.to(device), bezier_labels.to(device)
                 val_loss += F.mse_loss(model(imgs, char_idxs), bezier_labels).item()
         scheduler.step()
