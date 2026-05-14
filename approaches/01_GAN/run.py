@@ -80,10 +80,20 @@ def load_ckpt(device):
     return enc, gen
 
 
+_infer_tf = T.Compose([
+    T.Grayscale(1),
+    T.Resize((128, 128)),
+    T.ToTensor(),
+    T.Normalize((0.5,), (0.5,)),
+])
+
+
 def generate(enc, gen, device):
-    ref_img = CharDataset(load_all_writers(DATA_ROOT))[0][0].unsqueeze(0).to(device)
-    with torch.no_grad():
-        style = enc(ref_img)
+    # Group all dataset paths by character label
+    data     = load_all_writers(DATA_ROOT)
+    by_label = {}
+    for path, label in data:
+        by_label.setdefault(label, []).append(path)
 
     def fname(ch):
         if ch.isupper():  return f'uc_{ch}.png'
@@ -94,6 +104,12 @@ def generate(enc, gen, device):
     imgs  = []
     with torch.no_grad():
         for char, idx in chars:
+            # Use a real image of THIS character as the reference (no augmentation)
+            paths = by_label.get(idx, [])
+            if not paths:
+                continue
+            ref = _infer_tf(Image.open(paths[0])).unsqueeze(0).to(device)
+            style = enc(ref)
             out = gen(style, torch.tensor([idx], device=device))
             arr = ((out.squeeze().cpu().numpy() + 1) / 2 * 255).clip(0, 255).astype(np.uint8)
             imgs.append((char, arr))
