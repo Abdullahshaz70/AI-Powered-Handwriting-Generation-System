@@ -1,0 +1,2 @@
+approach,char_acc_top1,char_acc_top5,writer_acc,checkpoint_epoch
+02_MultiTaskCNN,57.64,89.93,31.94,?

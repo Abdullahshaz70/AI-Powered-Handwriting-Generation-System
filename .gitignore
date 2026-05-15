@@ -1,8 +1,11 @@
 # Root-level checkpoints folder (legacy — checkpoints now live in approaches/*/checkpoints/)
 /checkpoints/
 
-# Generated outputs
+# Generated outputs (approach run.py outputs — do not commit)
 outputs/
+# But DO commit the stats evaluation outputs (charts + tables)
+!stats/outputs/
+!stats/outputs/**
 
 # Bézier label cache (auto-regenerated)
 Data/bezier_labels.npy
