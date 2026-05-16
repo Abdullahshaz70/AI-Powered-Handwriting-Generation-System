@@ -38,5 +38,5 @@ Flask>=3.0.0
   python run.py --epochs 30
   # Output: outputs/predictions_grid.png (real images with predicted labels)
 
-  All outputs go to approaches/0X_NAME/outputs/. Files are named lc_a.png / uc_A.png / digit_0.png to avoid Windows case-insensitive filesystem collisions. Each approach also
+  All outputs go to approaches/0X_NAME/outputs/. Files are named lc_a.png / uc_A.png / digit_0.png to avoid Windows case insensitive filesystem collisions. Each approach also
   saves a grid.png showing all characters in one image.
