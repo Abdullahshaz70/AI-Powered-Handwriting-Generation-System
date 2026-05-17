@@ -1,2 +1,2 @@
 approach,overall_mse,val_mse_ckpt,endpoint_dev,epoch
-05_CharNet,0.004221,0.015052,0.073605,105
+05_CharNet,8.6e-05,0.015052,0.010822,105

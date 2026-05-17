@@ -1,0 +1,5 @@
+approach,accuracy,macro_precision,macro_recall,macro_f1,correct,total
+01_GAN,0.0,0.0,0.0,0.0,0,62
+03_FontCNN,0.0,0.0,0.0,0.0,0,62
+04_BezierReg,0.0,0.0,0.0,0.0,0,62
+05_CharNet,0.0,0.0,0.0,0.0,0,62
